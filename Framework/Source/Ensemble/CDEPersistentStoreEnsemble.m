@@ -665,7 +665,6 @@ NSString * const CDEManagedObjectContextSaveNotificationKey = @"managedObjectCon
         return;
     }
     
-	[operationQueue cancelAllOperations];
     [operationQueue addOperationWithBlock:^{
         NSError *error = nil;
         [eventStore flush:&error];
