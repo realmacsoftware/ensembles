@@ -158,6 +158,22 @@ NSString * const CDEManagedObjectContextSaveNotificationKey = @"managedObjectCon
     [saveMonitor stopMonitoring];
 }
 
+#pragma mark - Discovering and Managing Ensembles
+
++ (void)retrieveEnsembleIdentifiersFromCloudFileSystem:(id <CDECloudFileSystem>)cloudFileSystem completion:(void(^)(NSError *error, NSArray *identifiers))completion
+{
+    [cloudFileSystem contentsOfDirectoryAtPath:@"/" completion:^(NSArray *contents, NSError *error) {
+        NSArray *names = [contents valueForKeyPath:@"name"];
+        if (completion) completion(error, names);
+    }];
+}
+
++ (void)removeEnsembleWithIdentifier:(NSString *)identifier inCloudFileSystem:(id <CDECloudFileSystem>)cloudFileSystem completion:(void(^)(NSError *error))completion
+{
+    NSString *path = [NSString stringWithFormat:@"/%@", identifier];
+    [cloudFileSystem removeItemAtPath:path completion:completion];
+}
+
 #pragma mark - Initial Checks
 
 - (void)performInitialChecks
