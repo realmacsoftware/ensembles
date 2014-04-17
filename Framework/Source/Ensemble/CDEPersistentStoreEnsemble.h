@@ -14,6 +14,7 @@
 @class CDEPersistentStoreEnsemble;
 @protocol CDECloudFileSystem;
 
+
 ///
 /// @name Notifications
 ///
@@ -54,6 +55,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
 
 @optional
 
+
 ///
 /// @name Leeching
 ///
@@ -71,6 +73,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  @param ensemble The `CDEPersistentStoreEnsemble` that is importing the store
  */
 - (void)persistentStoreEnsembleDidImportStore:(CDEPersistentStoreEnsemble *)ensemble;
+
 
 ///
 /// @name Merging
@@ -131,6 +134,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  */
 - (void)persistentStoreEnsemble:(CDEPersistentStoreEnsemble *)ensemble didSaveMergeChangesWithNotification:(NSNotification *)notification;
 
+
 ///
 /// @name Deleeching
 ///
@@ -148,6 +152,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  @param error An error describing the cause of the deleech
  */
 - (void)persistentStoreEnsemble:(CDEPersistentStoreEnsemble *)ensemble didDeleechWithError:(NSError *)error;
+
 
 ///
 /// @name Object Identity
@@ -188,6 +193,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  */
 @interface CDEPersistentStoreEnsemble : NSObject
 
+
 ///
 /// @name Delegate
 ///
@@ -196,6 +202,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  The ensemble's delegate.
  */
 @property (nonatomic, weak, readwrite) id <CDEPersistentStoreEnsembleDelegate> delegate;
+
 
 ///
 /// @name Cloud File System
@@ -206,18 +213,20 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  */
 @property (nonatomic, strong, readonly) id <CDECloudFileSystem> cloudFileSystem;
 
+
 ///
 /// @name Storage for Ensemble
 ///
 
 /**
- The root of a directory used by the ensemble to store transaction logs and other data needed to sync.
+ File URL for the root of a directory used by the ensemble to store transaction logs and other data needed to sync.
  
  The directory is setup when the ensemble leeches, and removed when it deleeches. The data stored includes the transaction logs, binary files, and various metadata files.
  
  The default location is set by the framework to be a folder inside the user's Application Support directory. You can override this by passing a path upon initialization.
  */
-@property (nonatomic, strong, readonly) NSString *localDataRootDirectory;
+@property (nonatomic, strong, readonly) NSURL *localDataRootDirectoryURL;
+
 
 ///
 /// @name Ensemble Identity
@@ -230,14 +239,15 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  */
 @property (nonatomic, strong, readonly) NSString *ensembleIdentifier;
 
+
 ///
 /// @name Persistent Store and Model
 ///
 
 /**
- The path to the SQLite persistent store that is to be synced.
+ The file URL to the SQLite persistent store that is to be synced.
  */
-@property (nonatomic, strong, readonly) NSString *storePath;
+@property (nonatomic, strong, readonly) NSURL *storeURL;
 
 /**
  The file URL of the managed object model file used for the persistent store.
@@ -250,6 +260,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  The `NSManagedObjectModel` used for the monitored persistent store.
  */
 @property (nonatomic, strong, readonly) NSManagedObjectModel *managedObjectModel;
+
 
 ///
 /// @name Active State
@@ -270,6 +281,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  */
 @property (nonatomic, assign, readonly, getter = isMerging) BOOL merging;
 
+
 ///
 /// @name Initialization
 ///
@@ -280,11 +292,11 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  Unless you have good reason to set the local data root elsewhere, this is the initializer you should use.
  
  @param identifier The global identifier for the ensemble. This must be the same for all syncing ensemble objects across devices.
- @param path The path to the persistent store that is to be synced.
+ @param storeURL The file URL for the persistent store that is to be synced.
  @param managedObjectModelURL A file URL for the location of the compiled (momd, mom) model file used in the persistent store.
  @param cloudFileSystem The cloud file system object used to transfer files between devices.
  */
-- (instancetype)initWithEnsembleIdentifier:(NSString *)identifier persistentStorePath:(NSString *)path managedObjectModelURL:(NSURL *)modelURL cloudFileSystem:(id <CDECloudFileSystem>)cloudFileSystem;
+- (instancetype)initWithEnsembleIdentifier:(NSString *)identifier persistentStoreURL:(NSURL *)storeURL managedObjectModelURL:(NSURL *)modelURL cloudFileSystem:(id <CDECloudFileSystem>)cloudFileSystem;
 
 /**
  Initializes an ensemble.
@@ -292,12 +304,13 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  This is the designated initializer.
  
  @param identifier The global identifier for the ensemble. This must be the same for all syncing ensemble objects across devices.
- @param path The path to the persistent store that is to be synced.
+ @param storeURL The file URL to the persistent store that is to be synced.
  @param managedObjectModelURL A file URL for the location of the compiled (momd, mom) model file used in the persistent store.
  @param cloudFileSystem The cloud file system object used to transfer files between devices.
- @param dataRoot The path to the root directory used by the ensemble to store transaction logs and other metadata.
+ @param dataRootURL The file URL to the root directory used by the ensemble to store transaction logs and other metadata.
  */
-- (instancetype)initWithEnsembleIdentifier:(NSString *)identifier persistentStorePath:(NSString *)path managedObjectModelURL:(NSURL *)modelURL cloudFileSystem:(id <CDECloudFileSystem>)cloudFileSystem localDataRootDirectory:(NSString *)dataRoot;
+- (instancetype)initWithEnsembleIdentifier:(NSString *)identifier persistentStoreURL:(NSURL *)storeURL managedObjectModelURL:(NSURL *)modelURL cloudFileSystem:(id <CDECloudFileSystem>)cloudFileSystem localDataRootDirectoryURL:(NSURL *)dataRootURL;
+
 
 ///
 /// @name Leeching and Deleeching
@@ -316,7 +329,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  
  You should avoid saving to the persistent store during leeching. If a save is detected, the leech will terminate with an error.
  
- @param completion A completion block that is executed when leeching completes, whether successful or not. The block is passed nil upon a successful merge, and an `NSError` otherwise.
+ @param completion A completion block that is executed when leeching completes, whether successful or not. The block is passed `nil` upon a successful leech, and an `NSError` otherwise.
  */
 - (void)leechPersistentStoreWithCompletion:(CDECompletionBlock)completion;
 
@@ -327,9 +340,10 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  
  Because this can be a lengthy process, the method is asynchronous.
  
- @param completion A completion block that is executed when deleeching completes. The block is passed nil upon a successful merge, and an `NSError` otherwise.
+ @param completion A completion block that is executed when deleeching completes. The block is passed nil upon success, and an `NSError` otherwise.
  */
 - (void)deleechPersistentStoreWithCompletion:(CDECompletionBlock)completion;
+
 
 ///
 /// @name Merging
@@ -352,6 +366,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  @param completion A block that is executed upon completion. The block is passed nil if the cancellation is successful, and an `NSError` otherwise.
  */
 - (void)cancelMergeWithCompletion:(CDECompletionBlock)completion;
+
 
 ///
 /// @name Ensemble Discovery and Management
@@ -381,6 +396,7 @@ extern NSString * const CDEManagedObjectContextSaveNotificationKey;
  @param completion The completion block called when the data has been removed. Success is indicated by the error being nil.
  */
 + (void)removeEnsembleWithIdentifier:(NSString *)identifier inCloudFileSystem:(id <CDECloudFileSystem>)cloudFileSystem completion:(void(^)(NSError *error))completion;
+
 
 ///
 /// @name Waiting for Task Completion
