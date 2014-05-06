@@ -54,7 +54,7 @@
 {
     __block NSArray *result = nil;
     [eventManagedObjectContext performBlockAndWait:^{
-        CDEStoreModificationEvent *lastMergeEvent = [CDEStoreModificationEvent fetchNonBaselineEventForPersistentStoreIdentifier:eventStore.persistentStoreIdentifier revisionNumber:eventStore.lastMergeRevision inManagedObjectContext:eventManagedObjectContext];
+        CDEStoreModificationEvent *lastMergeEvent = [CDEStoreModificationEvent fetchNonBaselineEventForPersistentStoreIdentifier:eventStore.persistentStoreIdentifier revisionNumber:eventStore.lastMergeRevisionSaved inManagedObjectContext:eventManagedObjectContext];
         CDEStoreModificationEvent *baseline = [CDEStoreModificationEvent fetchMostRecentBaselineStoreModificationEventInManagedObjectContext:eventManagedObjectContext];
         CDERevisionSet *baselineRevisionSet = baseline.revisionSet;
 
@@ -286,7 +286,7 @@
         NSSet *stores = [NSSet setWithArray:[events valueForKeyPath:@"eventRevision.persistentStoreIdentifier"]];
         NSArray *sortDescs = @[[NSSortDescriptor sortDescriptorWithKey:@"eventRevision.revisionNumber" ascending:YES]];
         for (NSString *persistentStoreId in stores) {
-            NSPredicate *predicate = [NSPredicate predicateWithFormat:@"eventRevision.persistentStoreIdentifier = %@ AND type != %d", persistentStoreId, CDEStoreModificationEventTypeBaseline];
+            NSPredicate *predicate = [NSPredicate predicateWithFormat:@"eventRevision.persistentStoreIdentifier = %@ AND type != %d AND type != %d", persistentStoreId, CDEStoreModificationEventTypeBaseline, CDEStoreModificationEventTypeIncomplete];
             NSArray *storeEvents = [events filteredArrayUsingPredicate:predicate];
             storeEvents = [storeEvents sortedArrayUsingDescriptors:sortDescs];
             if (storeEvents.count == 0) continue;
@@ -325,7 +325,6 @@
     __block long long maxCount = -1;
     [eventManagedObjectContext performBlockAndWait:^{
         NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:@"CDEStoreModificationEvent"];
-        fetch.propertiesToFetch = @[@"globalCount"];
         
         NSArray *result = [eventManagedObjectContext executeFetchRequest:fetch error:NULL];
         if (!result) @throw [NSException exceptionWithName:CDEException reason:@"Failed to get global count" userInfo:nil];
@@ -369,7 +368,7 @@
 {
     __block CDERevisionSet *newRevisionSet = nil;
     [eventManagedObjectContext performBlockAndWait:^{
-        CDERevisionNumber lastMergeRevision = eventStore.lastMergeRevision;
+        CDERevisionNumber lastMergeRevision = eventStore.lastMergeRevisionSaved;
         NSString *persistentStoreId = self.eventStore.persistentStoreIdentifier;
         CDEStoreModificationEvent *lastMergeEvent = [CDEStoreModificationEvent fetchNonBaselineEventForPersistentStoreIdentifier:persistentStoreId revisionNumber:lastMergeRevision inManagedObjectContext:eventManagedObjectContext];
         

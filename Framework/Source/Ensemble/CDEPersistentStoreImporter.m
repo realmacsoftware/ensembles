@@ -56,7 +56,7 @@
     NSManagedObjectContext *eventContext = eventStore.managedObjectContext;
     CDEEventBuilder *eventBuilder = [[CDEEventBuilder alloc] initWithEventStore:self.eventStore];
     eventBuilder.ensemble = self.ensemble;
-    [eventBuilder makeNewEventOfType:CDEStoreModificationEventTypeBaseline];
+    [eventBuilder makeNewEventOfType:CDEStoreModificationEventTypeBaseline uniqueIdentifier:nil];
     [eventBuilder performBlockAndWait:^{
         // Use distant past for the time, so the leeched data gets less
         // priority than existing data.
@@ -84,6 +84,7 @@
         [eventBuilder addChangesForInsertedObjects:allObjects objectsAreSaved:YES inManagedObjectContext:context];
         
         [eventContext performBlock:^{
+            [eventBuilder finalizeNewEvent];
             [eventContext save:&error];
             
             dispatch_async(dispatch_get_main_queue(), ^{

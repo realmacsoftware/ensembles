@@ -46,13 +46,15 @@ static NSString *kCDEDefaultStoreType;
         NSError *error = nil;
         CDEStoreModificationEvent *event = nil;
         event = [CDEStoreModificationEvent fetchStoreModificationEventWithAllowedTypes:types persistentStoreIdentifier:eventStore.persistentStoreIdentifier revisionNumber:revisionNumber inManagedObjectContext:eventStore.managedObjectContext];
-        if (!event) {
+        if (event) {
+            [self migrateStoreModificationEvents:@[event] toFile:path completion:completion];
+        }
+        else {
+            NSDictionary *info = @{NSLocalizedDescriptionKey : @"Failed to fetch local event in migrateLocalEventToTemporaryFilesForRevision..."};
+            error = [NSError errorWithDomain:CDEErrorDomain code:CDEErrorCodeUnknown userInfo:info];
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (completion) completion(error);
             });
-        }
-        else {
-            [self migrateStoreModificationEvents:@[event] toFile:path completion:completion];
         }
     }];
 }
@@ -63,14 +65,16 @@ static NSString *kCDEDefaultStoreType;
         NSError *error = nil;
         CDEStoreModificationEvent *baseline = nil;
         baseline = [CDEStoreModificationEvent fetchStoreModificationEventWithUniqueIdentifier:uniqueId globalCount:count persistentStorePrefix:storePrefix inManagedObjectContext:eventStore.managedObjectContext];
-        if (!baseline) {
+        if (baseline) {
+            NSAssert(baseline.type == CDEStoreModificationEventTypeBaseline, @"Wrong event type for baseline");
+            [self migrateStoreModificationEvents:@[baseline] toFile:path completion:completion];
+        }
+        else {
+            NSDictionary *info = @{NSLocalizedDescriptionKey : @"Failed to fetch local event in migrateLocalBaselineWithUniqueIdentifier..."};
+            error = [NSError errorWithDomain:CDEErrorDomain code:CDEErrorCodeUnknown userInfo:info];
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (completion) completion(error);
             });
-        }
-        else {
-            NSAssert(baseline.type == CDEStoreModificationEventTypeBaseline, @"Wrong event type for baseline");
-            [self migrateStoreModificationEvents:@[baseline] toFile:path completion:completion];
         }
     }];
 }
@@ -99,6 +103,7 @@ static NSString *kCDEDefaultStoreType;
     NSPersistentStoreCoordinator *mainCoordinator = eventStore.managedObjectContext.persistentStoreCoordinator;
     NSPersistentStoreCoordinator *persistentStoreCoordinator = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:mainCoordinator.managedObjectModel];
     exportContext.persistentStoreCoordinator = persistentStoreCoordinator;
+    exportContext.undoManager = nil;
 
     NSError *error = nil;
     NSPersistentStore *fileStore = nil;
@@ -133,13 +138,14 @@ static NSString *kCDEDefaultStoreType;
 
 - (void)migrateEventsInFromFiles:(NSArray *)paths completion:(CDECompletionBlock)completion
 {
-    CDELog(CDELoggingLevelVerbose, @"Migrating file events to event store");
+    CDELog(CDELoggingLevelVerbose, @"Migrating file events to event store from paths: %@", paths);
     
     [self.eventStore.managedObjectContext performBlock:^{
         NSManagedObjectContext *importContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSConfinementConcurrencyType];
         NSPersistentStoreCoordinator *mainCoordinator = eventStore.managedObjectContext.persistentStoreCoordinator;
         NSPersistentStoreCoordinator *persistentStoreCoordinator = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:mainCoordinator.managedObjectModel];
         importContext.persistentStoreCoordinator = persistentStoreCoordinator;
+        importContext.undoManager = nil;
         
         NSError *error = nil;
         NSPersistentStore *fileStore = nil;
@@ -261,7 +267,7 @@ static NSString *kCDEDefaultStoreType;
 - (NSArray *)storeModificationEventsCreatedLocallySinceRevisionNumber:(CDERevisionNumber)revisionNumber error:(NSError * __autoreleasing *)error
 {
     NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:@"CDEStoreModificationEvent"];
-    fetch.predicate = [NSPredicate predicateWithFormat:@"eventRevision.revisionNumber > %lld AND eventRevision.persistentStoreIdentifier = %@ && type != %d", revisionNumber, eventStore.persistentStoreIdentifier, CDEStoreModificationEventTypeBaseline];
+    fetch.predicate = [NSPredicate predicateWithFormat:@"eventRevision.revisionNumber > %lld AND eventRevision.persistentStoreIdentifier = %@ && type != %d && type != %d", revisionNumber, eventStore.persistentStoreIdentifier, CDEStoreModificationEventTypeBaseline, CDEStoreModificationEventTypeIncomplete];
     NSArray *storeModEvents = [eventStore.managedObjectContext executeFetchRequest:fetch error:error];
     return storeModEvents;
 }
@@ -273,24 +279,7 @@ static NSString *kCDEDefaultStoreType;
     
     NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:@"CDEStoreModificationEvent"];
     NSArray *fromContextObjects = [fromContext executeFetchRequest:fetch error:error];
-    if (!fromContextObjects) return nil;
-    
-    NSFetchRequest *toContextFetch = [NSFetchRequest fetchRequestWithEntityName:@"CDEStoreModificationEvent"];
-    NSArray *toContextObjects = [toContext executeFetchRequest:toContextFetch error:error];
-    if (!toContextObjects) return nil;
-    
-    // Make sure there are no duplicates. Enforce uniqueness on revision.
-    NSArray *keys = [toContextObjects valueForKeyPath:@"eventRevision.revision.uniqueIdentifier"];
-    NSDictionary *toContextObjectsByRevisionId = [[NSDictionary alloc] initWithObjects:toContextObjects forKeys:keys];
-    NSMutableArray *objectsToMigrate = [NSMutableArray arrayWithCapacity:fromContextObjects.count];
-    for (CDEStoreModificationEvent *event in fromContextObjects) {
-        id <NSCopying> key = event.eventRevision.revision.uniqueIdentifier;
-        CDEStoreModificationEvent *existingObject = toContextObjectsByRevisionId[key];
-        if (existingObject) continue;
-        [objectsToMigrate addObject:event];
-    }
-    
-    return objectsToMigrate;
+    return fromContextObjects;
 }
 
 - (NSMapTable *)migrateEntity:(NSString *)entityName inManagedObjectContext:(NSManagedObjectContext *)fromContext toContext:(NSManagedObjectContext *)toContext enforceUniquenessForAttributes:(NSArray *)uniqueAttributes error:(NSError * __autoreleasing *)error

@@ -106,7 +106,7 @@
 
 - (BOOL)shouldRebase
 {
-    // Rebase if there are more than 500 object changes, and we can reduce object changes by more than 50%,
+    // Rebase if there are more than 500 object changes, or we can reduce data by more than 50%,
     // or if there is no baseline at all
     NSManagedObjectContext *context = eventStore.managedObjectContext;
     __block BOOL hasBaseline = NO;
@@ -327,7 +327,7 @@
     [context performBlockAndWait:^{
         NSError *error = nil;
         NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:@"CDEObjectChange"];
-        NSPredicate *eventTypePredicate = [NSPredicate predicateWithFormat:@"storeModificationEvent.type != %d", CDEStoreModificationEventTypeBaseline];
+        NSPredicate *eventTypePredicate = [NSPredicate predicateWithFormat:@"storeModificationEvent.type != %d && storeModificationEvent.type != %d", CDEStoreModificationEventTypeBaseline, CDEStoreModificationEventTypeIncomplete];
         NSPredicate *changeTypePredicate = [NSPredicate predicateWithFormat:@"type = %d", type];
         fetch.predicate = [NSCompoundPredicate andPredicateWithSubpredicates:@[eventTypePredicate, changeTypePredicate]];
         count = [context countForFetchRequest:fetch error:&error];

@@ -26,6 +26,7 @@
 @synthesize event = event;
 @synthesize eventStore = eventStore;
 @synthesize eventManagedObjectContext = eventManagedObjectContext;
+@synthesize eventType = eventType;
 
 #pragma mark - Initialization
 
@@ -35,6 +36,7 @@
     if (self) {
         eventStore = newStore;
         eventManagedObjectContext = newContext;
+        eventType = CDEStoreModificationEventTypeIncomplete;
     }
     return self;
 }
@@ -46,45 +48,55 @@
 
 #pragma mark - Making New Events
 
-- (CDERevision *)makeNewEventOfType:(CDEStoreModificationEventType)type
+- (CDERevision *)makeNewEventOfType:(CDEStoreModificationEventType)type uniqueIdentifier:(NSString *)uniqueIdOrNil
 {
     __block CDERevision *returnRevision = nil;
     [eventManagedObjectContext performBlockAndWait:^{
-        CDERevisionNumber lastRevision = eventStore.lastRevision;
+        eventType = type;
+        
+        CDERevisionNumber lastRevision = eventStore.lastRevisionSaved;
         NSString *persistentStoreId = self.eventStore.persistentStoreIdentifier;
         
         CDERevisionManager *revisionManager = [[CDERevisionManager alloc] initWithEventStore:eventStore];
         revisionManager.managedObjectModelURL = self.ensemble.managedObjectModelURL;
-        CDEGlobalCount globalCountBeforeMerge = [revisionManager maximumGlobalCount];
+        CDEGlobalCount globalCountBeforeMakingEvent = [revisionManager maximumGlobalCount];
 
         event = [NSEntityDescription insertNewObjectForEntityForName:@"CDEStoreModificationEvent" inManagedObjectContext:eventManagedObjectContext];
         
-        event.type = type;
+        event.type = CDEStoreModificationEventTypeIncomplete;
         event.timestamp = [NSDate timeIntervalSinceReferenceDate];
-        event.globalCount = globalCountBeforeMerge+1;
+        event.globalCount = globalCountBeforeMakingEvent+1;
         event.modelVersion = [self.ensemble.managedObjectModel cde_entityHashesPropertyList];
+        if (uniqueIdOrNil) event.uniqueIdentifier = uniqueIdOrNil;
         
         CDEEventRevision *revision = [NSEntityDescription insertNewObjectForEntityForName:@"CDEEventRevision" inManagedObjectContext:eventManagedObjectContext];
-        revision.persistentStoreIdentifier = self.eventStore.persistentStoreIdentifier;
+        revision.persistentStoreIdentifier = persistentStoreId;
         revision.revisionNumber = lastRevision+1;
         revision.storeModificationEvent = event;
         
         // Set the state of other stores
-        if (type == CDEStoreModificationEventTypeSave) {
+        if (eventType == CDEStoreModificationEventTypeSave) {
             CDERevisionSet *newRevisionSet = [revisionManager revisionSetForLastMergeOrBaseline];
             [newRevisionSet removeRevisionForPersistentStoreIdentifier:persistentStoreId];
             event.revisionSetOfOtherStoresAtCreation = newRevisionSet;
         }
-        else if (type == CDEStoreModificationEventTypeMerge) {
+        else if (eventType == CDEStoreModificationEventTypeMerge) {
             CDERevisionSet *mostRecentSet = [revisionManager revisionSetOfMostRecentEvents];
-            [mostRecentSet removeRevisionForPersistentStoreIdentifier:self.eventStore.persistentStoreIdentifier];
+            [mostRecentSet removeRevisionForPersistentStoreIdentifier:persistentStoreId];
             event.revisionSetOfOtherStoresAtCreation = mostRecentSet;
         }
         
-        returnRevision = [event.revisionSet revisionForPersistentStoreIdentifier:self.eventStore.persistentStoreIdentifier];
+        returnRevision = [event.revisionSet revisionForPersistentStoreIdentifier:persistentStoreId];
     }];
     
     return returnRevision;
+}
+
+- (void)finalizeNewEvent
+{
+    [eventManagedObjectContext performBlockAndWait:^{
+        event.type = eventType;
+    }];
 }
 
 #pragma mark - Modifying Events

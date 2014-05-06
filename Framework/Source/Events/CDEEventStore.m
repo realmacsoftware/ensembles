@@ -190,13 +190,13 @@ static NSString *defaultPathToEventDataRootDirectory = nil;
 
 #pragma mark - Revisions
 
-- (CDERevisionNumber)lastRevisionNumberForEventRevisionPredicate:(NSPredicate *)predicate
+- (CDERevisionNumber)lastRevisionNumberSavedForEventRevisionPredicate:(NSPredicate *)predicate
 {
     __block CDERevisionNumber result = -1;
     [self.managedObjectContext performBlockAndWait:^{
         NSFetchRequest *request = [[NSFetchRequest alloc] initWithEntityName:@"CDEEventRevision"];
         request.predicate = predicate;
-        request.propertiesToFetch = @[@"revisionNumber"];
+        request.includesPendingChanges = NO; // Only consider saved revisions
         
         NSError *error = nil;
         NSArray *revisions = [self.managedObjectContext executeFetchRequest:request error:&error];
@@ -211,24 +211,24 @@ static NSString *defaultPathToEventDataRootDirectory = nil;
     return returnNumber;
 }
 
-- (CDERevisionNumber)lastMergeRevision
+- (CDERevisionNumber)lastMergeRevisionSaved
 {
     NSPredicate *predicate = [NSPredicate predicateWithFormat:@"persistentStoreIdentifier = %@ AND storeModificationEvent.type = %d", self.persistentStoreIdentifier, CDEStoreModificationEventTypeMerge];
-    CDERevisionNumber result = [self lastRevisionNumberForEventRevisionPredicate:predicate];
+    CDERevisionNumber result = [self lastRevisionNumberSavedForEventRevisionPredicate:predicate];
     return result;
 }
 
-- (CDERevisionNumber)lastSaveRevision
+- (CDERevisionNumber)lastSaveRevisionSaved
 {
     NSPredicate *predicate = [NSPredicate predicateWithFormat:@"persistentStoreIdentifier = %@ AND storeModificationEvent.type = %d", self.persistentStoreIdentifier, CDEStoreModificationEventTypeSave];
-    CDERevisionNumber result = [self lastRevisionNumberForEventRevisionPredicate:predicate];
+    CDERevisionNumber result = [self lastRevisionNumberSavedForEventRevisionPredicate:predicate];
     return result;
 }
 
-- (CDERevisionNumber)lastRevision
+- (CDERevisionNumber)lastRevisionSaved
 {
-    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"persistentStoreIdentifier = %@ AND (storeModificationEvent != NIL OR storeModificationEventForOtherStores != NIL)", self.persistentStoreIdentifier];
-    CDERevisionNumber result = [self lastRevisionNumberForEventRevisionPredicate:predicate];
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"persistentStoreIdentifier = %@ AND (storeModificationEvent.type != %d OR storeModificationEventForOtherStores.type != %d)", self.persistentStoreIdentifier, CDEStoreModificationEventTypeIncomplete, CDEStoreModificationEventTypeIncomplete];
+    CDERevisionNumber result = [self lastRevisionNumberSavedForEventRevisionPredicate:predicate];
     return result;
 }
 
@@ -352,12 +352,14 @@ static NSString *defaultPathToEventDataRootDirectory = nil;
 
 #pragma mark - Flushing out queued operations
 
-- (void)flush:(NSError * __autoreleasing *)error
+- (BOOL)flush:(NSError * __autoreleasing *)error
 {
+    __block BOOL success = YES;
     [self saveStoreMetadata];
     [self.managedObjectContext performBlockAndWait:^{
-        [managedObjectContext save:error];
+        success = [managedObjectContext save:error];
     }];
+    return success;
 }
 
 
@@ -466,9 +468,24 @@ static NSString *defaultPathToEventDataRootDirectory = nil;
 
 #pragma mark - Core Data Stack
 
+- (NSURL *)eventStoreModelURL
+{
+    NSBundle *bundle = [NSBundle bundleForClass:[CDEEventStore class]];
+    NSURL *modelURL = [bundle URLForResource:@"CDEEventStoreModel" withExtension:@"momd"];
+    if (!modelURL) {
+        // Search for bundle
+        NSURL *resourcesBundleURL = [bundle URLForResource:@"Ensembles" withExtension:@"bundle"];
+        NSBundle *resourceBundle = resourcesBundleURL ? [NSBundle bundleWithURL:resourcesBundleURL] : nil;
+        modelURL = [resourceBundle URLForResource:@"CDEEventStoreModel" withExtension:@"momd"];
+    }
+    return modelURL;
+}
+
 - (BOOL)setupCoreDataStack:(NSError * __autoreleasing *)error
 {
-    NSURL *modelURL = [[NSBundle bundleForClass:[CDEEventStore class]] URLForResource:@"CDEEventStoreModel" withExtension:@"momd"];
+    NSURL *modelURL = [self eventStoreModelURL];
+    NSAssert(modelURL != nil, @"Ensembles internal model resource not found. Make sure it is copied into your app bundle");
+    
     NSManagedObjectModel *model = [[NSManagedObjectModel alloc] initWithContentsOfURL:modelURL];
     NSPersistentStoreCoordinator *coordinator = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:model];
     
@@ -480,6 +497,7 @@ static NSString *defaultPathToEventDataRootDirectory = nil;
     managedObjectContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
     [managedObjectContext performBlockAndWait:^{
         managedObjectContext.persistentStoreCoordinator = coordinator;
+        managedObjectContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy;
         managedObjectContext.undoManager = nil;
     }];
     

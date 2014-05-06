@@ -7,6 +7,7 @@
 //
 
 #import "CDEEventIntegrator.h"
+#import "CDEFoundationAdditions.h"
 #import "CDEEventBuilder.h"
 #import "CDEPersistentStoreEnsemble.h"
 #import "NSMapTable+CDEAdditions.h"
@@ -114,7 +115,9 @@
     
     NSArray *stores = context.persistentStoreCoordinator.persistentStores;
     for (NSPersistentStore *store in stores) {
-        if ([self.storeURL isEqual:store.URL]) {
+        NSURL *url1 = [self.storeURL URLByStandardizingPath];
+        NSURL *url2 = [store.URL URLByStandardizingPath];
+        if ([url1 isEqual:url2]) {
             saveOccurredDuringMerge = YES;
             break;
         }
@@ -170,19 +173,16 @@
                 return;
             }
             
+            // Create id of new event
+            // Register event in case of crashes
+            newEventUniqueId = [[NSProcessInfo processInfo] globallyUniqueString];
+            [self.eventStore registerIncompleteEventIdentifier:newEventUniqueId isMandatory:NO];
+            
             // Create a merge event
             CDEEventBuilder *eventBuilder = [[CDEEventBuilder alloc] initWithEventStore:self.eventStore];
             eventBuilder.ensemble = self.ensemble;
-            CDERevision *revision = [eventBuilder makeNewEventOfType:CDEStoreModificationEventTypeMerge];
-            
-            // Get unique id of event
-            [eventStoreContext performBlockAndWait:^{
-                newEventUniqueId = [eventBuilder.event.uniqueIdentifier copy];
-            }];
-            
-            // Register event in case of crashes
-            [self.eventStore registerIncompleteEventIdentifier:newEventUniqueId isMandatory:NO];
-            
+            CDERevision *revision = [eventBuilder makeNewEventOfType:CDEStoreModificationEventTypeMerge uniqueIdentifier:newEventUniqueId];
+        
             // Repair inconsistencies caused by integration
             BOOL repairSucceeded = [self repairWithMergeEventBuilder:eventBuilder error:&error];
             if (!repairSucceeded) {
@@ -197,14 +197,17 @@
                 return;
             }
             
-            // Save changes event context. First save child, then parent.
+            // Save changes event context
             __block BOOL eventSaveSucceeded = NO;
             [eventStoreContext performBlockAndWait:^{
                 BOOL isUnique = [self checkUniquenessOfEventWithRevision:revision];
-                if (isUnique)
+                if (isUnique) {
+                    [eventBuilder finalizeNewEvent];
                     eventSaveSucceeded = [eventStoreContext save:&error];
-                else
+                }
+                else {
                     error = [NSError errorWithDomain:CDEErrorDomain code:CDEErrorCodeSaveOccurredDuringMerge userInfo:nil];
+                }
             }];
             if (!eventSaveSucceeded) {
                 [self failWithError:error];
@@ -232,7 +235,9 @@
     [self.eventStore.managedObjectContext performBlockAndWait:^{
         NSFetchRequest *fetch = [[NSFetchRequest alloc] initWithEntityName:@"CDEStoreModificationEvent"];
         fetch.predicate = [NSPredicate predicateWithFormat:@"eventRevision.persistentStoreIdentifier = %@ && eventRevision.revisionNumber = %lld && type != %d", self.eventStore.persistentStoreIdentifier, revision.revisionNumber, CDEStoreModificationEventTypeBaseline];
-        count = [self.eventStore.managedObjectContext countForFetchRequest:fetch error:NULL];
+        NSError *error = nil;
+        count = [self.eventStore.managedObjectContext countForFetchRequest:fetch error:&error];
+        if (count == NSNotFound) CDELog(CDELoggingLevelError, @"Could not get count of revisions: %@", error);
     }];
     return count == 1;
 }
@@ -247,8 +252,12 @@
         [eventContext performBlockAndWait:^{
             CDEStoreModificationEvent *event = [CDEStoreModificationEvent fetchStoreModificationEventWithUniqueIdentifier:newEventUniqueId inManagedObjectContext:eventContext];
             if (event) {
+                NSError *error = nil;
                 [eventContext deleteObject:event];
-                [eventContext save:NULL];
+                if (![eventContext save:&error]) {
+                    CDELog(CDELoggingLevelError, @"Could not save after deleting partially merged event from a failed merge. Will reset context: %@", error);
+                    [eventContext reset];
+                }
             }
         }];
     }
@@ -332,6 +341,10 @@
         // If all events are from this device, don't merge
         NSArray *storeIds = [storeModEvents valueForKeyPath:@"@distinctUnionOfObjects.eventRevision.persistentStoreIdentifier"];
         if (!needFullIntegration && storeIds.count == 1 && [storeIds.lastObject isEqualToString:self.eventStore.persistentStoreIdentifier]) return;
+        
+        // If there are no object changes, don't merge
+        NSUInteger numberOfChanges = [[storeModEvents valueForKeyPath:@"@sum.objectChanges.@count"] unsignedIntegerValue];
+        if (numberOfChanges == 0) return;
         
         // Apply changes in the events, in order.
         NSMutableDictionary *insertedObjectIDsByEntity = needFullIntegration ? [[NSMutableDictionary alloc] init] : nil;
@@ -466,7 +479,7 @@
 
 #pragma mark Applying Insertions
 
-// Called on event child context queue
+// Called on event context queue
 - (BOOL)insertObjectsForEntity:(NSEntityDescription *)entity objectChanges:(NSArray *)insertChanges error:(NSError * __autoreleasing *)error
 {
     // Determine which insertions actually need new objects. Some may already have
@@ -478,7 +491,7 @@
         [urisForInsertChanges addObject:CDENilToNSNull(url)];
     }
     
-    NSMutableArray *changesNeedingNewObjects = [[NSMutableArray alloc] initWithCapacity:insertChanges.count];
+    NSMutableArray *indexesNeedingNewObjects = [[NSMutableArray alloc] initWithCapacity:insertChanges.count];
     [managedObjectContext performBlockAndWait:^{
         [urisForInsertChanges enumerateObjectsUsingBlock:^(NSURL *url, NSUInteger i, BOOL *stop) {
             BOOL objectNeedsCreating = NO;
@@ -490,15 +503,20 @@
                 NSManagedObject *object = [managedObjectContext existingObjectWithID:objectID error:NULL];
                 objectNeedsCreating = !object || object.isDeleted || nil == object.managedObjectContext;
             }
-            if (objectNeedsCreating) [changesNeedingNewObjects addObject:insertChanges[i]];
+            if (objectNeedsCreating) [indexesNeedingNewObjects addObject:@(i)];
         }];
     }];
-        
+    
+    NSArray *changesNeedingNewObjects = [indexesNeedingNewObjects cde_arrayByTransformingObjectsWithBlock:^id(NSNumber *index) {
+        return insertChanges[index.unsignedIntegerValue];
+    }];
+    
     // Only now actually create objects, on the main context queue
     NSMutableArray *newObjects = [[NSMutableArray alloc] initWithCapacity:changesNeedingNewObjects.count];
     __block BOOL success = YES;
+    NSUInteger numberOfNewObjects = changesNeedingNewObjects.count;
     [managedObjectContext performBlockAndWait:^{
-        for (NSUInteger i = 0; i < changesNeedingNewObjects.count; i++) {
+        for (NSUInteger i = 0; i < numberOfNewObjects; i++) {
             id newObject = [NSEntityDescription insertNewObjectForEntityForName:entity.name inManagedObjectContext:managedObjectContext];
             if (!newObject) {
                 success = NO;
@@ -793,7 +811,7 @@
         // Call block on the saving context queue
         BOOL shouldSave = shouldSaveBlock(managedObjectContext, reparationContext);
         if (!shouldSave) {
-            *error = [NSError errorWithDomain:CDEErrorDomain code:CDEErrorCodeCancelled userInfo:nil];
+            if (error) *error = [NSError errorWithDomain:CDEErrorDomain code:CDEErrorCodeCancelled userInfo:nil];
             return NO;
         }
         
@@ -875,7 +893,7 @@
     return result;
 }
 
-// Called on event store child context
+// Called on event store context
 - (NSMapTable *)fetchObjectsByGlobalIdentifierForObjectChanges:(id)objectChanges error:(NSError * __autoreleasing *)error
 {
     // Get ids for objects directly involved in the change
