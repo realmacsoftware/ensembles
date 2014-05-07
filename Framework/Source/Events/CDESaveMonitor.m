@@ -181,6 +181,7 @@
     insertedObjects = [self monitoredManagedObjectsInSet:insertedObjects];
     deletedObjects = [self monitoredManagedObjectsInSet:deletedObjects];
     updatedObjects = [self monitoredManagedObjectsInSet:updatedObjects];
+    if (insertedObjects.count + deletedObjects.count + updatedObjects.count == 0) return;
     
     // Get change data. Must be called on the context thread, not the event store thread.
     CDEEventBuilder *eventBuilder = [[CDEEventBuilder alloc] initWithEventStore:self.eventStore];
