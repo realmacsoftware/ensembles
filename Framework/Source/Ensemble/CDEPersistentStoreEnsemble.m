@@ -63,6 +63,7 @@ NSString * const CDEManagedObjectContextSaveNotificationKey = @"managedObjectCon
 @synthesize cloudFileSystem = cloudFileSystem;
 @synthesize ensembleIdentifier = ensembleIdentifier;
 @synthesize storeURL = storeURL;
+@synthesize persistentStoreOptions = persistentStoreOptions;
 @synthesize cloudManager = cloudManager;
 @synthesize eventStore = eventStore;
 @synthesize saveMonitor = saveMonitor;
@@ -74,10 +75,12 @@ NSString * const CDEManagedObjectContextSaveNotificationKey = @"managedObjectCon
 
 #pragma mark - Initialization and Deallocation
 
-- (instancetype)initWithEnsembleIdentifier:(NSString *)identifier persistentStoreURL:(NSURL *)newStoreURL managedObjectModelURL:(NSURL *)modelURL cloudFileSystem:(id <CDECloudFileSystem>)newCloudFileSystem localDataRootDirectoryURL:(NSURL *)eventDataRootURL
+- (instancetype)initWithEnsembleIdentifier:(NSString *)identifier persistentStoreURL:(NSURL *)newStoreURL persistentStoreOptions:(NSDictionary *)storeOptions managedObjectModelURL:(NSURL *)modelURL cloudFileSystem:(id <CDECloudFileSystem>)newCloudFileSystem localDataRootDirectoryURL:(NSURL *)eventDataRootURL
 {
     self = [super init];
     if (self) {
+        persistentStoreOptions = storeOptions;
+        
         operationQueue = [[NSOperationQueue alloc] init];
         operationQueue.maxConcurrentOperationCount = 1;
         
@@ -112,7 +115,7 @@ NSString * const CDEManagedObjectContextSaveNotificationKey = @"managedObjectCon
 
 - (instancetype)initWithEnsembleIdentifier:(NSString *)identifier persistentStoreURL:(NSURL *)url managedObjectModelURL:(NSURL *)modelURL cloudFileSystem:(id <CDECloudFileSystem>)newCloudFileSystem
 {
-    return [self initWithEnsembleIdentifier:identifier persistentStoreURL:url managedObjectModelURL:modelURL cloudFileSystem:newCloudFileSystem localDataRootDirectoryURL:nil];
+    return [self initWithEnsembleIdentifier:identifier persistentStoreURL:url persistentStoreOptions:nil managedObjectModelURL:modelURL cloudFileSystem:newCloudFileSystem localDataRootDirectoryURL:nil];
 }
 
 - (void)initializeEventIntegrator
@@ -120,6 +123,7 @@ NSString * const CDEManagedObjectContextSaveNotificationKey = @"managedObjectCon
     NSURL *url = self.storeURL;
     self.eventIntegrator = [[CDEEventIntegrator alloc] initWithStoreURL:url managedObjectModel:self.managedObjectModel eventStore:self.eventStore];
     self.eventIntegrator.ensemble = self;
+    self.eventIntegrator.persistentStoreOptions = persistentStoreOptions;
     
     __weak typeof(self) weakSelf = self;
     self.eventIntegrator.shouldSaveBlock = ^(NSManagedObjectContext *savingContext, NSManagedObjectContext *reparationContext) {
@@ -553,9 +557,9 @@ NSString * const CDEManagedObjectContextSaveNotificationKey = @"managedObjectCon
     [tasks addObject:checkRegistrationTask];
     
     CDEAsynchronousTaskBlock processChangesTask = ^(CDEAsynchronousTaskCallbackBlock next) {
-        NSError *error = nil;
-        [eventStore flush:&error];
-        next(error, NO);
+        [eventStore flushWithCompletion:^(NSError *error) {
+            next(error, NO);
+        }];
     };
     [tasks addObject:processChangesTask];
     
@@ -706,9 +710,9 @@ NSString * const CDEManagedObjectContextSaveNotificationKey = @"managedObjectCon
     }
     
     [operationQueue addOperationWithBlock:^{
-        NSError *error = nil;
-        [eventStore flush:&error];
-        [self dispatchCompletion:completion withError:error];
+        [eventStore flushWithCompletion:^(NSError *error) {
+            [self dispatchCompletion:completion withError:error];
+        }];
     }];
 }
 
