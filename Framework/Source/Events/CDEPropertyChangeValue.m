@@ -174,7 +174,7 @@
 - (void)storeAttributeChangeForDescription:(NSAttributeDescription *)propertyDesc newValue:(id)newValue
 {
     NSAttributeDescription *attribute = (id)propertyDesc;
-    if ([attribute valueTransformerName]) {
+    if ([attribute valueTransformerName] && attribute.valueTransformerName.length > 0) {
         NSValueTransformer *valueTransformer = [NSValueTransformer valueTransformerForName:attribute.valueTransformerName];
         newValue = [valueTransformer transformedValue:newValue];
     }
@@ -275,7 +275,7 @@
         returnValue = self.value == [NSNull null] ? nil : self.value;
     }
     
-    if (attribute.valueTransformerName) {
+    if (attribute.valueTransformerName && attribute.valueTransformerName.length > 0) {
         NSValueTransformer *valueTransformer = [NSValueTransformer valueTransformerForName:attribute.valueTransformerName];
         if (!valueTransformer) {
             CDELog(CDELoggingLevelWarning, @"Failed to retrieve value transformer: %@", attribute.valueTransformerName);
